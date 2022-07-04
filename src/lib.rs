@@ -2,6 +2,7 @@
 
 use embedded_hal::spi;
 
+/// An 80501 DAC with 16 bit resolution.
 /// Currently this dac requires that a device be able to write and flush a bus.
 /// The flushing capability is not currenlty being used but for future
 /// compatability we will keep it until certain that flushing is guarenteed to
