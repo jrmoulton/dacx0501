@@ -53,56 +53,100 @@ struct DacState {
 
 #[derive(Default)]
 struct DacConfig {
-    ref_pwdwn: bool,
-    dac_pwdwn: bool,
+    ref_pwdwn: InternRefState,
+    dac_pwdwn: PowerState,
 }
 impl DacConfig {
     fn to_array(&self) -> [u8; 2] {
-        [self.ref_pwdwn as u8, self.dac_pwdwn as u8]
+        [
+            // When set to 1, this bit disables the device internal reference.
+            matches!(self.ref_pwdwn, InternRefState::Disable) as u8,
+            // When set to 1, the DAC in power-down mode and the DAC output is connected to GND
+            // through a 1-kΩ internal resistor.
+            matches!(self.dac_pwdwn, PowerState::Off) as u8,
+        ]
     }
 }
 
 struct GainConfig {
-    ref_div: bool,
-    buff_gain: bool,
+    ref_div: RefDivState,
+    buff_gain: GainState,
 }
 impl Default for GainConfig {
     fn default() -> Self {
         Self {
-            ref_div: false,
-            buff_gain: true,
+            ref_div: RefDivState::OneX,
+            buff_gain: GainState::TwoX,
         }
     }
 }
 impl GainConfig {
     fn to_array(&self) -> [u8; 2] {
-        [self.ref_div as u8, self.buff_gain as u8]
+        [
+            // When REF-DIV set to 1, the reference voltage is internally divided by a factor of 2.
+            matches!(self.ref_div, RefDivState::Half) as u8,
+            // When set to 1, the buffer amplifier for corresponding DAC has a gain of 2.
+            matches!(self.buff_gain, GainState::TwoX) as u8,
+        ]
     }
 }
 
+/// The state of the dac output
 pub enum PowerState {
     On,
     Off,
 }
+impl Default for PowerState {
+    fn default() -> Self {
+        Self::On
+    }
+}
+
+/// The state of the dac gain
 pub enum GainState {
     TwoX,
     OneX,
 }
+impl Default for GainState {
+    fn default() -> Self {
+        Self::TwoX
+    }
+}
+
+/// The state of the DAC reference divider which applies to both the internal and external
+/// reference
 pub enum RefDivState {
     Half,
     OneX,
 }
+impl Default for RefDivState {
+    fn default() -> Self {
+        Self::OneX
+    }
+}
+
+// The state of the DAC internal Reference
 pub enum InternRefState {
     Disable,
     Enable,
 }
+impl Default for InternRefState {
+    fn default() -> Self {
+        Self::Enable
+    }
+}
+
 #[derive(PartialEq, Eq)]
+/// The state of the DAC alarm which is high when there is not enough headroom between Vdd and the
+/// reference
 pub enum AlarmStatus {
     High,
     Low,
 }
 
 #[derive(Debug)]
+/// The error for this crate. A spi error can be returned by the HAL for every transfer or a bad
+/// value can be returned if the requested output value is too large for the chosen DAC.
 pub enum DacError {
     BadValue,
     SpiError,
@@ -149,9 +193,21 @@ macro_rules! Dac {
                 }
             }
 
-            // Sets the output voltage of the DAC
+            // Set the output voltage of the DAC without checking the level bounds for the dac
+            pub fn set_output_level_unckecked(&mut self, level: u16) -> Result<(), DacError> {
+                // Data are MSB aligned in straight binary format
+                self.data[0] = *Command::DACDATA;
+                self.data[1..].copy_from_slice(level.to_be_bytes().as_slice());
+                self.spi.write(&self.data).map_err(DacError::from)?;
+                Ok(())
+            }
+
+            // Set the output voltage of the DAC and check the level bounds for the
             pub fn set_output_level(&mut self, level: u16) -> Result<(), DacError> {
                 // Data are MSB aligned in straight binary format
+                if level as u32 & (1u32 << $bits) > 0 {
+                    return Err(DacError::BadValue);
+                }
                 self.data[0] = *Command::DACDATA;
                 self.data[1..].copy_from_slice(level.to_be_bytes().as_slice());
                 self.spi.write(&self.data).map_err(DacError::from)?;
@@ -163,7 +219,7 @@ macro_rules! Dac {
                 &mut self,
                 intern_ref: InternRefState,
             ) -> Result<(), DacError> {
-                self.dac_state.config.ref_pwdwn = matches!(intern_ref, InternRefState::Disable);
+                self.dac_state.config.ref_pwdwn = intern_ref;
                 self.data[0] = *Command::CONFIG;
                 self.data[1..].copy_from_slice(&self.dac_state.config.to_array());
                 self.spi.write(&self.data).map_err(DacError::from)?;
@@ -173,7 +229,7 @@ macro_rules! Dac {
             /// In power-off state the DAC output is connected to GND through a 1-kΩ internal resistor. The
             /// device is in power `On` state by default
             pub fn set_power_state(&mut self, state: PowerState) -> Result<(), DacError> {
-                self.dac_state.config.dac_pwdwn = matches!(state, PowerState::Off);
+                self.dac_state.config.dac_pwdwn = state;
                 self.data[0] = *Command::CONFIG;
                 self.data[1..].copy_from_slice(&self.dac_state.config.to_array());
                 self.spi.write(&self.data).map_err(DacError::from)?;
@@ -191,18 +247,19 @@ macro_rules! Dac {
             /// voltage is internally divided by a factor of 2. The reference divider is set to `OneX` by
             /// default
             pub fn set_reference_divider(&mut self, ref_div: RefDivState) -> Result<(), DacError> {
-                self.dac_state.gain.ref_div = matches!(ref_div, RefDivState::Half);
+                self.dac_state.gain.ref_div = ref_div;
                 self.data[0] = *Command::GAIN;
                 self.data[1..].copy_from_slice(&self.dac_state.gain.to_array());
                 self.spi.write(&self.data).map_err(DacError::from)?;
                 Ok(())
             }
 
-            /// When set to `on`, the buffer amplifier for the DAC has a gain of 2x. When `on` is false the
-            /// DAC has a gain of 1x. Using this gain can be useful when using the internal reference
-            /// divider is necessary. The output gain is on by default
+            /// When set to `TwoX`, the buffer amplifier for the DAC has a gain of 2x doubling the
+            /// voltage output. When set to `OneX` it has a gain of 1x. Using this gain can be
+            /// especially useful when using the internal reference divider set to `Half`. The
+            /// output gain is set to `TwoX` by default
             pub fn set_output_gain(&mut self, gain: GainState) -> Result<(), DacError> {
-                self.dac_state.gain.buff_gain = matches!(gain, GainState::TwoX);
+                self.dac_state.gain.buff_gain = gain;
                 self.data[0] = *Command::GAIN;
                 self.data[1..].copy_from_slice(&self.dac_state.gain.to_array());
                 self.spi.write(&self.data).map_err(DacError::from)?;
