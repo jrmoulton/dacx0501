@@ -216,8 +216,11 @@ macro_rules! Dac {
                 }
             }
 
-            /// Set the output voltage of the device without checking the level bounds for the device
-            pub fn set_output_level_unckecked(&mut self, level: u16) -> Result<(), DacError> {
+            /// # Safety
+            ///
+            /// This function sets the output level without checking the bounds on the size of the
+            /// value for the specified DAC
+            pub unsafe fn set_output_level_unckecked(&mut self, level: u16) -> Result<(), DacError> {
                 // Data are MSB aligned in straight binary format
                 self.data[0] = *Command::DACDATA;
                 self.data[1..].copy_from_slice(level.to_be_bytes().as_slice());
