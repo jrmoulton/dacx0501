@@ -1,4 +1,12 @@
+//! This crate is an embedded-hal driver library implementation for the Texas Instruments 80501,
+//! 70501 and 60501 DACs. It relies on the embedded-hal 1.0.0-alpha.8 traits being implemented in
+//! the board hal. See the [product page](https://www.ti.com/product/DAC80501/part-details/DAC80501ZDQFT) for the datasheet and other notes.
+
 #![no_std]
+#![deny(missing_docs)]
+#![doc(
+    html_logo_url = "https://www.ti.com/content/dam/ticom/images/products/package/d/dqf0008a.png"
+)]
 
 use core::convert::Infallible;
 use core::fmt;
@@ -91,9 +99,11 @@ impl GainConfig {
     }
 }
 
-/// The state of the dac output
+/// The state of the dac output. The device default is [`PowerState::On`]
 pub enum PowerState {
+    /// Normal device voltage output
     On,
+    /// The device output is connected to ground through a resistor
     Off,
 }
 impl Default for PowerState {
@@ -102,9 +112,11 @@ impl Default for PowerState {
     }
 }
 
-/// The state of the dac gain
+/// The state of the dac gain. The device default is [`GainState::TwoX`]
 pub enum GainState {
+    /// The output voltage of the device is increased by a factor of two
     TwoX,
+    /// The output voltage of the device is kept normal
     OneX,
 }
 impl Default for GainState {
@@ -114,9 +126,11 @@ impl Default for GainState {
 }
 
 /// The state of the DAC reference divider which applies to both the internal and external
-/// reference
+/// reference. The device default is [`RefDivState::OneX`]
 pub enum RefDivState {
+    /// The reference voltage is divided by a factor of 2
     Half,
+    /// The reference voltage is not modified
     OneX,
 }
 impl Default for RefDivState {
@@ -125,9 +139,11 @@ impl Default for RefDivState {
     }
 }
 
-// The state of the DAC internal Reference
+/// The state of the DAC internal Reference. The device default is [`InternRefState::Enable`]
 pub enum InternRefState {
+    /// The device internal reference is disabled
     Disable,
+    /// The device internal reference is enabled
     Enable,
 }
 impl Default for InternRefState {
@@ -137,18 +153,21 @@ impl Default for InternRefState {
 }
 
 #[derive(PartialEq, Eq)]
-/// The state of the DAC alarm which is high when there is not enough headroom between Vdd and the
-/// reference
+/// The state of the DAC alarm  The device default is [`AlarmStatus::Low`]
 pub enum AlarmStatus {
+    /// The device alarm status indicating that there is not enough headroom between Vdd and
+    /// the reference.
     High,
+    /// The device alarm status indicating normal operation
     Low,
 }
 
 #[derive(Debug)]
-/// The error for this crate. A spi error can be returned by the HAL for every transfer or a bad
-/// value can be returned if the requested output value is too large for the chosen DAC.
+/// The custom error for this crate
 pub enum DacError {
+    /// The value for the specified DAC overflowed
     ValueOverflow,
+    /// An internal embedded hal SPI transfer error
     SpiError,
 }
 impl fmt::Display for DacError {
@@ -172,7 +191,9 @@ impl From<Infallible> for DacError {
 }
 
 macro_rules! Dac {
-    (  $Name:ident, $bits:expr) => {
+    ($(#[$meta:meta])* $Name:ident, $bits:expr) => {
+
+        $(#[$meta])*
         pub struct $Name<Spi> {
             spi: Spi,
             data: [u8; 3],
@@ -185,10 +206,12 @@ macro_rules! Dac {
             Spi::Bus: spi::blocking::SpiBusWrite,
             DacError: core::convert::From<<Spi as embedded_hal::spi::ErrorType>::Error>,
         {
+            /// Creates a new instance of the specified dac with the internal state set to match
+            /// the device defaults
             pub fn new(spi: Spi) -> Self {
                 Self {
                     spi,
-                    data: [0x08u8, 0, 0],
+                    data: [0, 0, 0],
                     dac_state: DacState::default(),
                 }
             }
@@ -226,8 +249,9 @@ macro_rules! Dac {
                 Ok(())
             }
 
-            /// In power-off state the device output is connected to GND through a 1-kΩ internal resistor. The
-            /// device is in power `On` state by default
+            /// In power-off state the device output is connected to GND through a 1-kΩ internal
+            /// resistor. The device is in power `On` state by default. This reduces current
+            /// consumption to typically 15 µA at 5 V.
             pub fn set_power_state(&mut self, state: PowerState) -> Result<(), DacError> {
                 self.dac_state.config.dac_pwdwn = state;
                 self.data[0] = *Command::CONFIG;
@@ -292,6 +316,18 @@ macro_rules! Dac {
     };
 }
 
-Dac!(Dac80501, 16);
-Dac!(Dac70501, 14);
-Dac!(Dac60501, 12);
+Dac!(
+    /// A 16 bit DAC
+    Dac80501,
+    16
+);
+Dac!(
+    /// A 14 bit DAC
+    Dac70501,
+    14
+);
+Dac!(
+    /// A 12 bit DAC
+    Dac60501,
+    12
+);
