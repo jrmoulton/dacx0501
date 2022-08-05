@@ -148,13 +148,13 @@ pub enum AlarmStatus {
 /// The error for this crate. A spi error can be returned by the HAL for every transfer or a bad
 /// value can be returned if the requested output value is too large for the chosen DAC.
 pub enum DacError {
-    BadValue,
+    ValueOverflow,
     SpiError,
 }
 impl fmt::Display for DacError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::BadValue => f.write_str("Bad Value"),
+            Self::ValueOverflow => f.write_str("The data value was too large for the selected DAC"),
             Self::SpiError => f.write_str("Internal HAL SPI error"),
         }
     }
@@ -193,7 +193,7 @@ macro_rules! Dac {
                 }
             }
 
-            // Set the output voltage of the DAC without checking the level bounds for the dac
+            /// Set the output voltage of the device without checking the level bounds for the device
             pub fn set_output_level_unckecked(&mut self, level: u16) -> Result<(), DacError> {
                 // Data are MSB aligned in straight binary format
                 self.data[0] = *Command::DACDATA;
@@ -202,11 +202,11 @@ macro_rules! Dac {
                 Ok(())
             }
 
-            // Set the output voltage of the DAC and check the level bounds for the
+            /// Set the output voltage of the device and check the level bounds for the specified device
             pub fn set_output_level(&mut self, level: u16) -> Result<(), DacError> {
                 // Data are MSB aligned in straight binary format
                 if level as u32 & (1u32 << $bits) > 0 {
-                    return Err(DacError::BadValue);
+                    return Err(DacError::ValueOverflow);
                 }
                 self.data[0] = *Command::DACDATA;
                 self.data[1..].copy_from_slice(level.to_be_bytes().as_slice());
@@ -226,7 +226,7 @@ macro_rules! Dac {
                 Ok(())
             }
 
-            /// In power-off state the DAC output is connected to GND through a 1-kΩ internal resistor. The
+            /// In power-off state the device output is connected to GND through a 1-kΩ internal resistor. The
             /// device is in power `On` state by default
             pub fn set_power_state(&mut self, state: PowerState) -> Result<(), DacError> {
                 self.dac_state.config.dac_pwdwn = state;
