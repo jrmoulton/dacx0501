@@ -1,5 +1,5 @@
 //! This crate is an embedded-hal driver library implementation for the Texas Instruments 80501,
-//! 70501 and 60501 DACs. It relies on the embedded-hal 1.0.0-alpha.8 traits being implemented in
+//! 70501 and 60501 DACs. It relies on the embedded-hal 1.0.0 traits being implemented in
 //! the board hal. See the [product page](https://www.ti.com/product/DAC80501/part-details/DAC80501ZDQFT) for the datasheet and other notes.
 
 #![no_std]
@@ -193,6 +193,66 @@ impl From<Infallible> for DacError {
 macro_rules! Dac {
     ($(#[$meta:meta])* $Name:ident, $bits:expr) => {
 
+        impl<Spi> $Name<Spi>
+        where
+            Spi: spi::blocking::SpiDevice,
+            Spi::Bus: spi::blocking::SpiBusWrite,
+            DacError: core::convert::From<<Spi as embedded_hal::spi::ErrorType>::Error>,
+        {
+            /// Set the output voltage of the device and check the level bounds for the specified device
+            pub fn set_output_level(&mut self, level: u16) -> Result<(), DacError> {
+                // Data are MSB aligned in straight binary format
+                if level as u32 & (1u32 << $bits) > 0 {
+                    return Err(DacError::ValueOverflow);
+                }
+                self.data[0] = *Command::DACDATA;
+                self.data[1..].copy_from_slice(level.to_be_bytes().as_slice());
+                self.spi.write(&self.data).map_err(DacError::from)?;
+                Ok(())
+            }
+
+            /// # Safety
+            ///
+            /// This function sets the output level without checking the bounds on the size of the
+            /// value for the specified DAC
+            pub unsafe fn set_output_level_unckecked(&mut self, level: u16) -> Result<(), DacError> {
+                // Data are MSB aligned in straight binary format
+                self.data[0] = *Command::DACDATA;
+                self.data[1..].copy_from_slice(level.to_be_bytes().as_slice());
+                self.spi.write(&self.data).map_err(DacError::from)?;
+                Ok(())
+            }
+
+        }
+
+        Dac!($(#[$meta])* $Name :! dc);
+
+    };
+
+    ($(#[$meta:meta])* $Name:ident) => {
+
+        impl<Spi> $Name<Spi>
+        where
+            Spi: spi::blocking::SpiDevice,
+            Spi::Bus: spi::blocking::SpiBusWrite,
+            DacError: core::convert::From<<Spi as embedded_hal::spi::ErrorType>::Error>,
+        {
+            /// Set the output voltage of the device without any extra bounds checks
+            pub fn set_output_level(&mut self, level: u16) -> Result<(), DacError> {
+                // Data are MSB aligned in straight binary format
+                self.data[0] = *Command::DACDATA;
+                self.data[1..].copy_from_slice(level.to_be_bytes().as_slice());
+                self.spi.write(&self.data).map_err(DacError::from)?;
+                Ok(())
+            }
+        }
+
+        Dac!($(#[$meta])* $Name :! dc);
+
+    };
+
+    ($(#[$meta:meta])* $Name:ident :! $DC:ident) => {
+
         $(#[$meta])*
         pub struct $Name<Spi> {
             spi: Spi,
@@ -216,29 +276,6 @@ macro_rules! Dac {
                 }
             }
 
-            /// # Safety
-            ///
-            /// This function sets the output level without checking the bounds on the size of the
-            /// value for the specified DAC
-            pub unsafe fn set_output_level_unckecked(&mut self, level: u16) -> Result<(), DacError> {
-                // Data are MSB aligned in straight binary format
-                self.data[0] = *Command::DACDATA;
-                self.data[1..].copy_from_slice(level.to_be_bytes().as_slice());
-                self.spi.write(&self.data).map_err(DacError::from)?;
-                Ok(())
-            }
-
-            /// Set the output voltage of the device and check the level bounds for the specified device
-            pub fn set_output_level(&mut self, level: u16) -> Result<(), DacError> {
-                // Data are MSB aligned in straight binary format
-                if level as u32 & (1u32 << $bits) > 0 {
-                    return Err(DacError::ValueOverflow);
-                }
-                self.data[0] = *Command::DACDATA;
-                self.data[1..].copy_from_slice(level.to_be_bytes().as_slice());
-                self.spi.write(&self.data).map_err(DacError::from)?;
-                Ok(())
-            }
 
             /// Enables and disables the device internal reference. The internal reference is on by default
             pub fn set_internal_reference(
@@ -321,8 +358,7 @@ macro_rules! Dac {
 
 Dac!(
     /// A 16 bit DAC
-    Dac80501,
-    16
+    Dac80501
 );
 Dac!(
     /// A 14 bit DAC
